@@ -9,6 +9,7 @@ from game import game
 
 
 class GameCamera:
+
     def __init__(self, width, height):
         self.state = Rect(0, 0, width, height)
         self.level_width = 0
@@ -142,11 +143,6 @@ class Player(Entity):
         self.gravity_force = 0.5
         self.actual_jump_force = 0
         self.on_ground = False
-        # acceleration forces and constants
-        self.max_acc_force = 10
-        self.acc_force = 0.5
-        self.actual_acc_force = 0
-        self.accelerating = False
 
     def notify(self, event):
         if event.name == "keyboard_event":
@@ -210,9 +206,7 @@ class Player(Entity):
                     self.state = EntityState.falling_left
                 elif event.keyboard_dict.get(self.key_config.key_left) is False:
                     self.state = EntityState.standing
-                    self.accelerating = False
                 elif event.keyboard_dict.get(self.key_config.key_right) is True:
-                    self.accelerating = False
                     self.state = EntityState.walking_right
             # walking right
             elif self.state == EntityState.walking_right:
@@ -220,14 +214,10 @@ class Player(Entity):
                     self.state = EntityState.falling_right
                 elif event.keyboard_dict.get(self.key_config.key_right) is False:
                     self.state = EntityState.standing
-                    self.accelerating = False
                 elif event.keyboard_dict.get(self.key_config.key_left) is True:
-                    self.accelerating = False
                     self.state = EntityState.walking_left
             # standing
             else:
-                if not self.accelerating:
-                    self.actual_acc_force = 0
                 if not self.on_ground:
                     self.state = EntityState.falling_down
                 elif event.keyboard_dict.get(self.key_config.key_up) is True:
@@ -237,13 +227,9 @@ class Player(Entity):
                 elif event.keyboard_dict.get(self.key_config.key_left) is True:
                     self.state = EntityState.walking_left
                     self.on_ground = False
-                    self.accelerating = True
-                    self.force.y = -5
                 elif event.keyboard_dict.get(self.key_config.key_right) is True:
                     self.state = EntityState.walking_right
                     self.on_ground = False
-                    self.accelerating = True
-                    self.force.y = 5
 
     def set_force(self):
         # falling down
@@ -275,19 +261,16 @@ class Player(Entity):
             self.actual_jump_force -= self.gravity_force
         # walking left
         elif self.state == EntityState.walking_left:
-            self.force.x -= self.actual_acc_force
             self.force.y = 0
-            self.actual_acc_force += self.acc_force
+            self.force.x = -5
         # walking right
         elif self.state == EntityState.walking_right:
-            self.force.x += self.actual_acc_force
             self.force.y = 0
-            self.actual_acc_force += self.acc_force
+            self.force.x = 5
         # standing
         else:
             self.force.x = 0
             self.force.y = 0
-        print(self.actual_acc_force, self.state)
 
     def collide_x(self, block):
         if self.force.x < 0:
@@ -315,7 +298,6 @@ class Player(Entity):
         self.move_x()
         for block in world.blocks:
             if self.rect.colliderect(block):
-                self.accelerating = False
                 self.collide_x(block)
         self.move_y()
         for block in world.blocks:
