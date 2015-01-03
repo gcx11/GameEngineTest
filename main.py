@@ -44,6 +44,7 @@ class GameObject(pygame.sprite.Sprite):
         super().__init__()
         self.rect = Rect(x, y, width, height)
         self.image = None
+        self.layer = 0
         self.solid = True
         self.visible = True
 
@@ -55,7 +56,7 @@ class GameObject(pygame.sprite.Sprite):
         pass
 
 
-class Block(GameObject):
+class SolidBlock(GameObject):
 
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
@@ -63,13 +64,40 @@ class Block(GameObject):
         self.image.fill(pygame.Color("gray"))
 
 
-class MovingBlock(GameObject):
+class MovingBlock(SolidBlock):
+    
+    class DirectionState(enum.Enum):
+        
+        left = -1
+        right = 1
 
-    def __init__(self, x, y, width, height):
+    def __init__(self, x, y, width, height, distance, speed):
         super().__init__(x, y, width, height)
-        self.image = pygame.Surface((width, height))
-        self.image.fill(pygame.Color("gray"))
-        self.distance = 10
+        self.initial_x = x
+        self.initial_y = y
+        self.direction = self.DirectionState.left
+        self.distance = distance
+        self.speed = speed
+        TickEvent.register(self)
+
+    def notify(self, event):
+        if event.name == "tick":
+            if self.direction == self.DirectionState.left:
+                if self.rect.x < self.initial_x - self.distance:
+                    self.direction = self.DirectionState.right
+                else:
+                    self.move_left()
+            elif self.direction == self.DirectionState.right:
+                if self.rect.x > self.initial_x + self.distance:
+                    self.direction = self.DirectionState.left
+                else:
+                    self.move_right()
+
+    def move_left(self):
+        self.rect.x -= self.speed
+
+    def move_right(self):
+        self.rect.x += self.speed
 
 
 class EntityState(enum.Enum):
@@ -91,6 +119,7 @@ class Entity(GameObject):
         super().__init__(x, y, width, height)
         self.image = pygame.Surface((width, height))
         self.image.fill(pygame.Color("blue"))
+        self.layer = 2
         self.force = pygame.math.Vector2(0, 0)
         self.state = EntityState.standing
 
@@ -115,6 +144,7 @@ class Entity(GameObject):
     def physic(self):
         self.set_force()
         self.move_x()
+        # TODO: change due to layers
         for block in world.blocks:
             if self.rect.colliderect(block):
                 self.collide_x(block)
@@ -135,7 +165,6 @@ class Player(Entity):
 
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
-        KeyboardEvent.register(self)
         self.state = EntityState.falling_down
         self.key_config = Player.KeyConfig(pygame.K_w, pygame.K_a, pygame.K_d)
         # jump forces and constants
@@ -143,9 +172,14 @@ class Player(Entity):
         self.gravity_force = 0.5
         self.actual_jump_force = 0
         self.on_ground = False
+        self.under_forces = False
+        self.additional_force = 0
+        TickEvent.register(self)
+        KeyboardEvent.register(self)
+        CollisionEvent.register(self)
 
     def notify(self, event):
-        if event.name == "keyboard_event":
+        if event.name == "keyboard":
             # falling down
             if self.state == EntityState.falling_down:
                 if self.on_ground:
@@ -230,6 +264,12 @@ class Player(Entity):
                 elif event.keyboard_dict.get(self.key_config.key_right) is True:
                     self.state = EntityState.walking_right
                     self.on_ground = False
+        elif event.name == "collision":
+            self.on_ground = False
+            if event.objects[1].direction == event.objects[1].DirectionState.left:
+                self.additional_force = -event.objects[1].speed
+            else:
+                self.additional_force = event.objects[1].speed
 
     def set_force(self):
         # falling down
@@ -271,6 +311,8 @@ class Player(Entity):
         else:
             self.force.x = 0
             self.force.y = 0
+        # bug?
+        self.force.x += 3*self.additional_force
 
     def collide_x(self, block):
         if self.force.x < 0:
@@ -296,63 +338,78 @@ class Player(Entity):
     def physic(self):
         self.set_force()
         self.move_x()
-        for block in world.blocks:
-            if self.rect.colliderect(block):
-                self.collide_x(block)
+        for layer in range(5):
+            for block in world.blocks[layer]:
+                if self.rect.colliderect(block):
+                    self.on_ground = False
+                    self.collide_x(block)
         self.move_y()
-        for block in world.blocks:
-            if self.rect.colliderect(block):
-                self.on_ground = False
-                self.collide_y(block)
+        for layer in range(5):
+            for block in world.blocks[layer]:
+                if self.rect.colliderect(block):
+                    if isinstance(block, MovingBlock):
+                        EventManager.generate_event(CollisionEvent(self, block))
+                    self.on_ground = False
+                    self.collide_y(block)
+        self.additional_force = 0
 
 
-class HealthBar(GameObject):
+class GUI(GameObject):
 
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
-        self.image = pygame.Surface((width, height))
-        self.image.fill(pygame.Color("red"))
+        self.image = None
+        self.layer = 4
         self.solid = False
 
     def render(self):
         game.screen.blit(self.image, self.rect)
 
 
+class HealthBar(GUI):
+
+    def __init__(self, x, y, width, height):
+        super().__init__(x, y, width, height)
+        self.image = pygame.Surface((width, height))
+        self.image.fill(pygame.Color("red"))
+
+
 class GameWorld:
 
     def __init__(self):
-        self.blocks = []
-        self.entities = []
-        self.gui_items = []
+        self.blocks = [[] for _ in range(5)]
+        self.entities = [[] for _ in range(5)]
+        self.gui_items = [[] for _ in range(5)]
 
     def add_block(self, obj):
-        self.blocks.append(obj)
+        self.blocks[obj.layer].append(obj)
 
     def remove_block(self, obj):
-        self.blocks.remove(obj)
+        self.blocks[obj.layer].remove(obj)
 
     def add_entity(self, obj):
-        self.entities.append(obj)
+        self.entities[obj.layer].append(obj)
 
     def remove_entity(self, obj):
-        self.entities.remove(obj)
+        self.entities[obj.layer].remove(obj)
 
     def add_gui(self, obj):
-        self.gui_items.append(obj)
+        self.gui_items[obj.layer].append(obj)
 
     def remove_gui(self, obj):
-        self.gui_items.remove(obj)
+        self.gui_items[obj.layer].remove(obj)
 
     def render(self):
-        for game_object in self.blocks:
-            if game_object.visible:
-                game_object.render()
-        for game_entity in self.entities:
-            if game_entity.visible:
-                game_entity.render()
-        for gui_item in self.gui_items:
-            if gui_item.visible:
-                gui_item.render()
+        for layer in range(5):
+            for game_object in self.blocks[layer]:
+                if game_object.visible:
+                    game_object.render()
+            for game_entity in self.entities[layer]:
+                if game_entity.visible:
+                    game_entity.render()
+            for gui_item in self.gui_items[layer]:
+                if gui_item.visible:
+                    gui_item.render()
 
 
 world = GameWorld()
@@ -411,32 +468,49 @@ class RandomNumberEvent(EventBase):
 class KeyboardEvent(EventBase):
 
     def __init__(self):
-        super().__init__("keyboard_event")
+        super().__init__("keyboard")
         self.keyboard_dict = dict()
+
+    def __call__(self):
+        return self
 
     def add_key(self, state, char_ord):
         self.keyboard_dict[char_ord] = state
 
-    def update(self):
-        for item, key in self.keyboard_dict.items():
-            self.keyboard_dict[item] = None
+
+class CollisionEvent(EventBase):
+
+    def __init__(self):
+        super().__init__("collision")
+        self.objects = ()
+
+    def __call__(self, *args, **kwargs):
+        self.objects = args
+        return self
 
 
 TickEvent = TickEvent()
 LMBClickEvent = LMBClickEvent()
 RandomNumberEvent = RandomNumberEvent()
 KeyboardEvent = KeyboardEvent()
+CollisionEvent = CollisionEvent()
 
 
 class EventManager:
 
     def __init__(self):
         self.event_queue = []
+        self.event_stack = []
 
     def process_normal(self):
         self.event_queue.append(TickEvent())
         self.event_queue.append(RandomNumberEvent())
         self.event_queue.append(KeyboardEvent())
+        self.event_queue.extend(self.event_stack)
+        self.event_stack.clear()
+
+    def generate_event(self, event):
+        self.event_stack.append(event)
 
     def process_pygame(self, event):
         if event.type == pygame.QUIT:
@@ -484,18 +558,20 @@ class Engine:
 #########
 #########
 # borders
-world.add_block(Block(0, 0, 2000, 20))
-world.add_block(Block(0, 0, 20, 1000))
-world.add_block(Block(0, 980, 2000, 20))
-world.add_block(Block(1980, 0, 20, 1000))
+world.add_block(SolidBlock(0, 0, 2000, 20))
+world.add_block(SolidBlock(0, 0, 20, 1000))
+world.add_block(SolidBlock(0, 980, 2000, 20))
+world.add_block(SolidBlock(1980, 0, 20, 1000))
 # platforms
-world.add_block(Block(1000, 700, 600, 40))
-world.add_block(Block(400, 200, 500, 40))
-world.add_block(Block(1100, 300, 400, 40))
-world.add_block(Block(1500, 500, 300, 40))
-world.add_block(Block(400, 500, 300, 40))
-world.add_block(Block(600, 800, 200, 40))
-world.add_block(Block(1700, 200, 200, 40))
+world.add_block(SolidBlock(1000, 700, 600, 40))
+world.add_block(SolidBlock(400, 200, 500, 40))
+world.add_block(SolidBlock(1100, 300, 400, 40))
+world.add_block(SolidBlock(1500, 500, 300, 40))
+world.add_block(SolidBlock(400, 500, 300, 40))
+world.add_block(SolidBlock(600, 800, 200, 40))
+world.add_block(SolidBlock(1700, 200, 200, 40))
+# moving platforms
+world.add_block(MovingBlock(200, 600, 200, 40, 100, 1))
 # health bar
 world.add_gui(HealthBar(50, 50, 100, 30))
 #########
