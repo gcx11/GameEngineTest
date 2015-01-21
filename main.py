@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import enum
 import pygame
 from pygame.locals import *
@@ -34,7 +35,7 @@ class GameCamera:
             self.state.y = self.level_height - self.state.height
 
 
-camera = GameCamera(800, 600)
+camera = GameCamera(game.window_width, game.window_height)
 camera.set_level_area(2000, 1000)
 
 
@@ -144,14 +145,15 @@ class Entity(GameObject):
     def physic(self):
         self.set_force()
         self.move_x()
-        # TODO: change due to layers
-        for block in world.blocks:
-            if self.rect.colliderect(block):
-                self.collide_x(block)
+        for layer in range(5):
+            for block in world.blocks[layer]:
+                if self.rect.colliderect(block):
+                    self.collide_x(block)
         self.move_y()
-        for block in world.blocks:
-            if self.rect.colliderect(block):
-                self.collide_y(block)
+        for layer in range(5):
+            for block in world.blocks[layer]:
+                if self.rect.colliderect(block):
+                    self.collide_y(block)
 
 
 class Player(Entity):
@@ -172,7 +174,6 @@ class Player(Entity):
         self.gravity_force = 0.5
         self.actual_jump_force = 0
         self.on_ground = False
-        self.under_forces = False
         self.additional_force = 0
         TickEvent.register(self)
         KeyboardEvent.register(self)
@@ -312,7 +313,7 @@ class Player(Entity):
             self.force.x = 0
             self.force.y = 0
         # bug?
-        self.force.x += 3*self.additional_force
+        self.force.x += self.additional_force
 
     def collide_x(self, block):
         if self.force.x < 0:
@@ -335,6 +336,18 @@ class Player(Entity):
             self.state = EntityState.standing
             self.rect.bottom = block.rect.top
 
+    def check_falling(self):
+        temp_rect = copy.deepcopy(self.rect)
+        temp_rect.y = self.rect.y + 1
+        for layer in range(5):
+            for block in world.blocks[layer]:
+                if temp_rect.colliderect(block):
+                    if isinstance(block, MovingBlock):
+                        EventManager.generate_event(CollisionEvent(self, block))
+                    return False
+        else:
+            return True
+
     def physic(self):
         self.set_force()
         self.move_x()
@@ -352,6 +365,14 @@ class Player(Entity):
                     self.on_ground = False
                     self.collide_y(block)
         self.additional_force = 0
+        if self.check_falling():
+            if not self.state == EntityState.jumping_up:
+                self.on_ground = False
+                self.state = EntityState.falling_down
+        else:
+            self.on_ground = True
+            self.state = EntityState.standing
+            #self.actual_jump_force = 0
 
 
 class GUI(GameObject):
@@ -366,12 +387,53 @@ class GUI(GameObject):
         game.screen.blit(self.image, self.rect)
 
 
+class Label(GUI):
+
+    # TODO: rewrite !!!
+
+    def __init__(self, x, y, width, height, text, b_color, f_color, font_name, font_size):
+        super().__init__(x, y, width, height)
+        self.image = pygame.Surface((width, height))
+        self.text = text
+        self.b_color = b_color
+        self.f_color = f_color
+        self.font_name = font_name
+        self.font_size = font_size
+        # checking font
+        print(pygame.font.get_fonts())
+        if self.font_name in pygame.font.get_fonts():
+            self.font = pygame.font.SysFont(self.font_name, self.font_size)
+        else:
+            self.font = pygame.font.SysFont("arial", self.font_size)
+        LMBClickEvent.register(self)
+
+    def notify(self, event):
+        if event.name == "lmb_click":
+            if self.clicked(event.mouse_x, event.mouse_y):
+                EventManager.generate_event(LabelClickedEvent)
+
+    def clicked(self, mouse_x, mouse_y):
+        if (self.rect.x <= mouse_x <= self.rect.x + self.rect.width and
+                self.rect.y <= mouse_y <= self.rect.y + self.rect.height):
+            return True
+        else:
+            return False
+
+    def render(self):
+        rendered_text = self.font.render(self.text, True, self.f_color, None)
+        text_pos = rendered_text.get_rect()
+        text_pos.center = (self.rect.x + self.rect.width/2, self.rect.y + self.rect.height/2)
+        pygame.draw.rect(game.screen, self.b_color, self.rect)
+        game.screen.blit(rendered_text, text_pos)
+
+
 class HealthBar(GUI):
 
-    def __init__(self, x, y, width, height):
+    def __init__(self, x, y, width, height, layer=4):
         super().__init__(x, y, width, height)
         self.image = pygame.Surface((width, height))
         self.image.fill(pygame.Color("red"))
+        self.layer = layer
 
 
 class GameWorld:
@@ -489,11 +551,23 @@ class CollisionEvent(EventBase):
         return self
 
 
+class LabelClickedEvent(EventBase):
+
+    def __init__(self):
+        super().__init__("label_clicked")
+        self.label = None
+
+    def __call__(self, *args, **kwargs):
+        self.label = args[0]
+        return self
+
+
 TickEvent = TickEvent()
 LMBClickEvent = LMBClickEvent()
 RandomNumberEvent = RandomNumberEvent()
 KeyboardEvent = KeyboardEvent()
 CollisionEvent = CollisionEvent()
+LabelClickedEvent = LabelClickedEvent()
 
 
 class EventManager:
@@ -571,9 +645,11 @@ world.add_block(SolidBlock(400, 500, 300, 40))
 world.add_block(SolidBlock(600, 800, 200, 40))
 world.add_block(SolidBlock(1700, 200, 200, 40))
 # moving platforms
-world.add_block(MovingBlock(200, 600, 200, 40, 100, 1))
+world.add_block(MovingBlock(1000, 600, 200, 40, 600, 2))
 # health bar
 world.add_gui(HealthBar(50, 50, 100, 30))
+# test label
+world.add_gui(Label(100, 400, 100, 100, "Hello world!", (0, 0, 0, 0), (0, 0, 0, 0), "verdana", 23))
 #########
 #########
 engine = Engine()
