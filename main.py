@@ -2,11 +2,38 @@
 
 import copy
 import enum
+import math
 import pygame
 from pygame.locals import *
 import random
 import sys
 from game import game
+from pprint import pprint
+
+
+class Log:
+
+    def __init__(self, *args):
+        self.objects = []
+        self.temp = None
+        self.data = []
+
+    def add_object(self, obj):
+        self.objects.append(obj)
+
+    def possible_record(self):
+        self.temp = [obj.__dict__ for obj in self.objects]
+
+    def accept_record(self):
+        self.data.append(self.temp)
+        self.data.append([obj.__dict__ for obj in self.objects])
+        self.temp = None
+
+    def add_record(self):
+        self.data.append([obj.__dict__ for obj in self.objects])
+
+
+log = Log()
 
 
 class GameCamera:
@@ -61,14 +88,15 @@ class SolidBlock(GameObject):
 
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
-        self.image = pygame.Surface((width, height))
+        self.image = pygame.Surface((width+5, height+5))
         self.image.fill(pygame.Color("gray"))
+        self.moving = False
 
 
 class MovingBlock(SolidBlock):
-    
+
     class DirectionState(enum.Enum):
-        
+
         left = -1
         right = 1
 
@@ -79,6 +107,7 @@ class MovingBlock(SolidBlock):
         self.direction = self.DirectionState.left
         self.distance = distance
         self.speed = speed
+        self.moving = True
         TickEvent.register(self)
 
     def notify(self, event):
@@ -86,11 +115,13 @@ class MovingBlock(SolidBlock):
             if self.direction == self.DirectionState.left:
                 if self.rect.x < self.initial_x - self.distance:
                     self.direction = self.DirectionState.right
+                    self.move_right()
                 else:
                     self.move_left()
             elif self.direction == self.DirectionState.right:
                 if self.rect.x > self.initial_x + self.distance:
                     self.direction = self.DirectionState.left
+                    self.move_left()
                 else:
                     self.move_right()
 
@@ -118,7 +149,7 @@ class Entity(GameObject):
 
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
-        self.image = pygame.Surface((width, height))
+        self.image = pygame.Surface((width+10, height+10))
         self.image.fill(pygame.Color("blue"))
         self.layer = 2
         self.force = pygame.math.Vector2(0, 0)
@@ -312,10 +343,39 @@ class Player(Entity):
         else:
             self.force.x = 0
             self.force.y = 0
-        # bug?
         self.force.x += self.additional_force
 
     def collide_x(self, block):
+        if isinstance(block, MovingBlock):
+            old_x = copy.deepcopy(self.rect.x)
+            log.possible_record()
+            if block.direction == block.DirectionState.left:
+                if self.force.x + block.speed < 0:
+                    self.state = EntityState.standing
+                    self.rect.left = block.rect.right
+                    self.force.x = 0
+                elif self.force.x + block.speed > 0:
+                    self.state = EntityState.standing
+                    self.rect.right = block.rect.left
+                    self.force.x = 0
+                # log test
+                if abs(self.rect.x - old_x) > 5:
+                    log.accept_record()
+                    print(log.data)
+                return
+            else:
+                if self.force.x + block.speed < 0:
+                    self.state = EntityState.standing
+                    self.rect.left = block.rect.left
+                    self.force.x = 0
+                elif self.force.x + block.speed > 0:
+                    self.state = EntityState.standing
+                    self.rect.right = block.rect.right
+                    self.force.x = 0
+                if abs(self.rect.x - old_x) > 5:
+                    log.accept_record()
+                    pprint(log.data)
+                return
         if self.force.x < 0:
             self.state = EntityState.standing
             self.rect.left = block.rect.right
@@ -349,6 +409,7 @@ class Player(Entity):
             return True
 
     def physic(self):
+        # moving and collisions
         self.set_force()
         self.move_x()
         for layer in range(5):
@@ -364,15 +425,18 @@ class Player(Entity):
                         EventManager.generate_event(CollisionEvent(self, block))
                     self.on_ground = False
                     self.collide_y(block)
-        self.additional_force = 0
+        # checking falling
         if self.check_falling():
-            if not self.state == EntityState.jumping_up:
+            if (self.state != EntityState.jumping_up and self.state != EntityState.jumping_left and
+                    self.state != EntityState.jumping_right):
                 self.on_ground = False
                 self.state = EntityState.falling_down
         else:
             self.on_ground = True
             self.state = EntityState.standing
-            #self.actual_jump_force = 0
+            # self.actual_jump_force = 0
+        # additional force for moving platforms
+        self.additional_force = 0
 
 
 class GUI(GameObject):
@@ -385,6 +449,74 @@ class GUI(GameObject):
 
     def render(self):
         game.screen.blit(self.image, self.rect)
+
+
+class Button(GUI):
+
+    def __init__(self, x, y, width, height, r, text, b_color, f_color, font_name, font_size):
+        super().__init__(x, y, width, height)
+        self.r = r
+        self.text = text
+        self.b_color = b_color
+        self.f_color = f_color
+        self.font_name = font_name
+        self.font_size = font_size
+        if self.font_name in pygame.font.get_fonts():
+            self.font = pygame.font.SysFont(self.font_name, self.font_size)
+        else:
+            self.font = pygame.font.SysFont("arial", self.font_size)
+        # text
+        self.rendered_text = self.font.render(self.text, True, self.f_color, None)
+        self.text_pos = self.rendered_text.get_rect()
+        self.text_pos.center = (self.rect.x + self.rect.width/2, self.rect.y + self.rect.height/2)
+        # helpful rectangles
+        self.upper_rect = Rect(self.rect.x + self.r, self.rect.y, self.rect.width - 2*self.r, self.r)
+        self.middle_rect = Rect(self.rect.x, self.rect.y + self.r, self.rect.width, self.rect.height - 2*self.r)
+        self.lower_rect = Rect(self.rect.x + self.r, self.rect.y + self.rect.height - self.r, self.rect.width - 2*self.r, self.r)
+        self.luc = Rect(self.rect.x, self.rect.y, self.r, self.r)
+        self.ruc = Rect(self.rect.x + self.rect.width - self.r, self.rect.y, self.r, self.r)
+        self.llc = Rect(self.rect.x, self.rect.y + self.rect.height - self.r, self.r, self.r)
+        self.rlc = Rect(self.rect.x + self.rect.width - self.r, self.rect.y + self.rect.height - self.r, self.r, self.r)
+        LMBClickEvent.register(self)
+
+    def notify(self, event):
+        if event.name == "lmb_click":
+            if self.clicked(event.mouse_x, event.mouse_y):
+                EventManager.generate_event(LabelClickedEvent)
+                print("Hip hip array!")
+
+    def clicked(self, mouse_x, mouse_y):
+        if (self.rect.x <= mouse_x <= self.rect.x + self.rect.width and
+                self.rect.y <= mouse_y <= self.rect.y + self.rect.height):
+            if (self.rect.x + self.r <= mouse_x <= self.rect.x + self.rect.width - self.r and
+                    self.rect.y <= mouse_y <= self.rect.y + self.r):
+                return True
+            elif (self.rect.x <= mouse_x <= self.rect.x + self.rect.width and
+                    self.rect.y + self.r <= mouse_y <= self.rect.y - self.r):
+                return True
+            elif (self.rect.x + self.r <= mouse_x <= self.rect.x + self.rect.width - self.r and
+                    self.rect.y + self.rect.height - self.r <= mouse_y <= self.rect.y + self.rect.height):
+                return True
+            elif (self.rect.x + self.r <= mouse_x <= self.rect.x + self.rect.width - self.r and
+                    self.rect.y + self.rect.height - self.r <= mouse_y <= self.rect.y + self.rect.height):
+                return True
+            elif (self.rect.x <= mouse_x <= self.rect.x + self.r and
+                    self.rect.x <= mouse_y <= self.rect.y + self.r and
+                    (self.rect.x + self.r - mouse_x)*(self.rect.x + self.r - mouse_x) + (self.rect.y + self.r - mouse_y)*(self.rect.y + self.r - mouse_y) <= self.r*self.r):
+                return True
+            else:
+                return False
+        else:
+            return False
+
+    def render(self):
+
+        pygame.draw.rect(game.screen, self.b_color, self.upper_rect)
+        pygame.draw.rect(game.screen, self.b_color, self.middle_rect)
+        pygame.draw.rect(game.screen, self.b_color, self.lower_rect)
+        pygame.draw.circle(game.screen, self.b_color, (self.luc.x + self.r, self.luc.y + self.r), self.r)
+        pygame.draw.circle(game.screen, self.b_color, (self.llc.x, self.llc.y), self.r)
+        game.screen.blit(self.rendered_text, self.text_pos)
 
 
 class Label(GUI):
@@ -614,6 +746,8 @@ class Engine:
         self.player = Player(50, 50, 40, 40)
         self.world.add_entity(self.player)
         self.camera = camera
+        log.add_object(self.player)
+        self.log = log
 
     def run(self):
         while self.is_running:
@@ -646,10 +780,11 @@ world.add_block(SolidBlock(600, 800, 200, 40))
 world.add_block(SolidBlock(1700, 200, 200, 40))
 # moving platforms
 world.add_block(MovingBlock(1000, 600, 200, 40, 600, 2))
+log.add_object(world.blocks[0][11])
 # health bar
 world.add_gui(HealthBar(50, 50, 100, 30))
 # test label
-world.add_gui(Label(100, 400, 100, 100, "Hello world!", (0, 0, 0, 0), (0, 0, 0, 0), "verdana", 23))
+world.add_gui(Button(100, 400, 100, 50, 20, "Hello world!", (255, 0, 0, 0), (0, 255, 0, 0), "verdana", 23))
 #########
 #########
 engine = Engine()
