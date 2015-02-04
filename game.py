@@ -23,4 +23,4 @@ class Game:
         # user defined values
 
 
-game = Game(800, 600, 60)
+game = Game(1000, 600, 60)

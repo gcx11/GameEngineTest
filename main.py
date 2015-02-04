@@ -22,7 +22,7 @@ class Log:
         self.objects.append(obj)
 
     def possible_record(self):
-        self.temp = [obj.__dict__ for obj in self.objects]
+        self.temp = [copy.deepcopy(obj.__dict__) for obj in self.objects]
 
     def accept_record(self):
         self.data.append(self.temp)
@@ -297,7 +297,7 @@ class Player(Entity):
                     self.state = EntityState.walking_right
                     self.on_ground = False
         elif event.name == "collision":
-            self.on_ground = False
+            #self.on_ground = False
             if event.objects[1].direction == event.objects[1].DirectionState.left:
                 self.additional_force = -event.objects[1].speed
             else:
@@ -347,43 +347,33 @@ class Player(Entity):
 
     def collide_x(self, block):
         if isinstance(block, MovingBlock):
-            old_x = copy.deepcopy(self.rect.x)
-            log.possible_record()
             if block.direction == block.DirectionState.left:
-                if self.force.x + block.speed < 0:
+                if self.force.x + block.speed <= 0:
                     self.state = EntityState.standing
                     self.rect.left = block.rect.right
                     self.force.x = 0
-                elif self.force.x + block.speed > 0:
+                elif self.force.x + block.speed >= 0:
                     self.state = EntityState.standing
                     self.rect.right = block.rect.left
                     self.force.x = 0
-                # log test
-                if abs(self.rect.x - old_x) > 5:
-                    log.accept_record()
-                    print(log.data)
-                return
-            else:
-                if self.force.x + block.speed < 0:
+            elif block.direction == block.DirectionState.right:
+                if self.force.x - block.speed <= 0:
                     self.state = EntityState.standing
-                    self.rect.left = block.rect.left
+                    self.rect.left = block.rect.right
                     self.force.x = 0
-                elif self.force.x + block.speed > 0:
+                elif self.force.x - block.speed >= 0:
                     self.state = EntityState.standing
-                    self.rect.right = block.rect.right
+                    self.rect.right = block.rect.left
                     self.force.x = 0
-                if abs(self.rect.x - old_x) > 5:
-                    log.accept_record()
-                    pprint(log.data)
-                return
-        if self.force.x < 0:
-            self.state = EntityState.standing
-            self.rect.left = block.rect.right
-            self.force.x = 0
-        elif self.force.x > 0:
-            self.state = EntityState.standing
-            self.rect.right = block.rect.left
-            self.force.x = 0
+        else:
+            if self.force.x < 0:
+                self.state = EntityState.standing
+                self.rect.left = block.rect.right
+                self.force.x = 0
+            elif self.force.x > 0:
+                self.state = EntityState.standing
+                self.rect.right = block.rect.left
+                self.force.x = 0
 
     def collide_y(self, block):
         if self.force.y < 0:
@@ -473,17 +463,14 @@ class Button(GUI):
         self.upper_rect = Rect(self.rect.x + self.r, self.rect.y, self.rect.width - 2*self.r, self.r)
         self.middle_rect = Rect(self.rect.x, self.rect.y + self.r, self.rect.width, self.rect.height - 2*self.r)
         self.lower_rect = Rect(self.rect.x + self.r, self.rect.y + self.rect.height - self.r, self.rect.width - 2*self.r, self.r)
-        self.luc = Rect(self.rect.x, self.rect.y, self.r, self.r)
-        self.ruc = Rect(self.rect.x + self.rect.width - self.r, self.rect.y, self.r, self.r)
-        self.llc = Rect(self.rect.x, self.rect.y + self.rect.height - self.r, self.r, self.r)
-        self.rlc = Rect(self.rect.x + self.rect.width - self.r, self.rect.y + self.rect.height - self.r, self.r, self.r)
         LMBClickEvent.register(self)
 
     def notify(self, event):
         if event.name == "lmb_click":
             if self.clicked(event.mouse_x, event.mouse_y):
                 EventManager.generate_event(LabelClickedEvent)
-                print("Hip hip array!")
+                self.b_color, self.f_color = self.f_color, self.b_color
+                #print("Hip hip array!")
 
     def clicked(self, mouse_x, mouse_y):
         if (self.rect.x <= mouse_x <= self.rect.x + self.rect.width and
@@ -501,7 +488,11 @@ class Button(GUI):
                     self.rect.y + self.rect.height - self.r <= mouse_y <= self.rect.y + self.rect.height):
                 return True
             elif (self.rect.x <= mouse_x <= self.rect.x + self.r and
-                    self.rect.x <= mouse_y <= self.rect.y + self.r and
+                    self.rect.y <= mouse_y <= self.rect.y + self.r and
+                    (self.rect.x + self.r - mouse_x)*(self.rect.x + self.r - mouse_x) + (self.rect.y + self.r - mouse_y)*(self.rect.y + self.r - mouse_y) <= self.r*self.r):
+                return True
+            elif (self.rect.x <= mouse_x <= self.rect.x + self.r and
+                    self.rect.y <= mouse_y <= self.rect.y + self.r and
                     (self.rect.x + self.r - mouse_x)*(self.rect.x + self.r - mouse_x) + (self.rect.y + self.r - mouse_y)*(self.rect.y + self.r - mouse_y) <= self.r*self.r):
                 return True
             else:
@@ -514,8 +505,10 @@ class Button(GUI):
         pygame.draw.rect(game.screen, self.b_color, self.upper_rect)
         pygame.draw.rect(game.screen, self.b_color, self.middle_rect)
         pygame.draw.rect(game.screen, self.b_color, self.lower_rect)
-        pygame.draw.circle(game.screen, self.b_color, (self.luc.x + self.r, self.luc.y + self.r), self.r)
-        pygame.draw.circle(game.screen, self.b_color, (self.llc.x, self.llc.y), self.r)
+        pygame.draw.circle(game.screen, self.b_color, (self.rect.x + self.r, self.rect.y + self.r), self.r)
+        pygame.draw.circle(game.screen, self.b_color, (self.rect.x + self.rect.width - self.r, self.rect.y + self.r), self.r)
+        pygame.draw.circle(game.screen, self.b_color, (self.rect.x + self.r, self.rect.y + self.rect.height - self.r), self.r)
+        pygame.draw.circle(game.screen, self.b_color, (self.rect.x + self.rect.width - self.r, self.rect.y + self.rect.height - self.r), self.r)
         game.screen.blit(self.rendered_text, self.text_pos)
 
 
